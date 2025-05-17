@@ -1,0 +1,281 @@
+---
+title: "STAT448 Assignment 1"
+author: "Thomas Waldin - 17775654"
+date: "2025-03-01"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Part 1
+
+Three observations for a random response variable Y are {3, 9, 15}; the corresponding values observed for the explanatory variable X are {6, 7, 8}. A linear model is assumed:
+Y =𝛽~0~ +𝛽~1~X+ ϵ
+
+a). The ordinary least square estimates of the coefficients 𝛽~0~ and 𝛽~1~ were calculated by hand as follows.
+
+<img src="hand_calc_1.jpg" width="500">
+
+b). The estimates of the residuals were also calculated by hand.
+
+<img src="hand_calc_2.jpg" width="500">
+
+c). The calculations above were repeated in R.
+
+```{r}
+# Observations
+y = matrix(c(3, 9, 15))
+x = matrix(c(6, 7, 8))
+
+# Design matrix X
+ones = rep(1,3)
+X = matrix(c(ones, x), nrow=3, ncol=2)
+
+# Bhat = (X'X)^-1 X'y
+Bhat = solve(t(X) %*% X) %*% t(X) %*% y
+Bhat
+
+# ehat = y - XBhat
+ehat = y - X%*%Bhat
+ehat
+```
+
+The values of 𝛽~0~ and 𝛽~1~ were calculated as -33 and 6 respectively. While the residuals are not exactly zero due to numerical precision limits, they are effectively zero.
+
+d). The coefficients can also be calculated using a simple linear regression model.
+
+```{r}
+# Simple linear regression model
+df = data.frame(x=X, y=y)
+model = lm(y ~ x, data=df)
+
+# Show coefficients
+coeffs = summary(model)$coefficients
+coeffs
+```
+
+The coefficients calculated are the same as the hand solution (𝛽~0~ and 𝛽~1~ as -33 and 6 respectively). A warning is flagged as the model is a near perfect fit in this case, which makes sense with the estimated residuals being zero.
+
+### Part 2
+
+In the context of Part 1, the case was considered where the values observed for the explanatory variable X are {5, 5, 5}.
+
+a). The new coefficient estimates are as follows.
+
+```{r}
+# Create the model again with new values in the data frame
+x = matrix(c(5, 5, 5))
+ones = rep(1,3)
+X = matrix(c(ones, x), nrow=3, ncol=2)
+df = data.frame(x=X, y=y)
+model = lm(y ~ x, data=df)
+
+# Show coefficients
+coeffs = summary(model)$coefficients
+coeffs
+
+# Look at model summary, as only one coefficient is shown
+summary(model)
+```
+
+The summary showed that one of the coefficients was not defined because of singularities, the other was calculated to be 9 (intercept).
+
+b).  Statistically this is due to there being no variation in X observations, which means there is no variance to explain changes in Y. This is a single-variable equivalent of perfect multicollinearity. To estimate coefficients, the matrix X^T^X must not be singular. In this case, X^T^X is singular, the determinant is zero, and the matrix is therefore non-invertable meaning there is no unique solution for 𝛽~1~.
+
+c). Geometrically, the X matrix represents a unit vector (intercept column) and a vector (observations column) with equal length in all three dimensions. As these vectors are linearly dependent, they lie on top of each other and the volume of the parallelepiped between them is zero. This volume is what the determinant of the matrix represents.
+
+### Part 3
+
+A provided CSV file contains data of student scores (response) and hours of study (explanatory variable). From this data, a simple linear regression model was generated to describe the relationship between them. Student scores are in the range 0 − 100 and hours of study are in the range 0−10.
+
+```{r}
+# Load csv
+scores = read.csv('Student_Scores_Dataset.csv')
+
+# Linear regression model
+model = lm(Scores ~ Hours, data=scores)
+
+summary(model)
+```
+
+a). The model summary above provides the coefficients 𝛽~0~ = 5.960 and 𝛽~1~ = 9.914. From these, the regression equation for student score can be formulated as follows.
+
+Y = 5.960 + 9.914X + ϵ
+
+b). A slope of 9.914 means the regression model predicts that for every hour of study the student score would increase by 9.914.
+
+c). From the model summary, hours of study likely have an effect on the student score. The p-value is much less than 0.05 signifying that X has a significant effect on Y. 
+
+d). The R^2^ value is 0.965 which is close to 0, suggesting a large amount of the variance of Y is explained by X. The RSE is smaller than the intercept (4.942 < 5.960) which suggests a good fit as a rule of thumb. The F-statistic also has a p-value much less than 0.05, signifying that the model is valid as a whole.
+
+e). The model residual plots can help validate the model. The plots are shown below.
+
+```{r, echo=FALSE}
+plot(model)
+```
+
+In the 'Residuals vs Fitted' plot, the residual values appear to be scattered randomly around zero. This suggests that a linear model is appropriate. The 'Q-Q Residuals' plot has points that mostly follow the diagonal line, with slight deviations at the tails. This suggests that residuals are mostly normally distributed. There is no funnel shape on the 'Scale-Location' plot, suggesting no issues with heteroscedasticity and there seem to be no extreme leverage points (beyond Cook's distance) on the 'Residuals vs Leverage' plot.
+
+f). A plot of the observations and the regression line is provided below.
+
+```{r, echo=FALSE}
+# Load ggplot2 package
+library(ggplot2)
+
+# Extract coefficients
+intercept = round(coef(model)[1], 3)
+slope = round(coef(model)[2], 3)
+
+# Create regression equation as a string
+reg_eq = paste0("y = ", slope, "x + ", + intercept)
+
+# Plot with regression line
+ggplot(scores, aes(x=Hours, y=Scores)) +
+  geom_point(color="blue", size=3) +  # Scatter plot
+  geom_smooth(method="lm", color="red", se=FALSE) +  # Regression line
+  labs(
+    title="Score vs Hours Studied",
+    subtitle=paste("Regression Equation:", reg_eq),
+    x="Hours Studied", 
+    y="Score"
+  ) + theme_minimal()
+```
+
+g). Using the equation of the regression line, score predictions can be made, given hours of study.
+
+```{r}
+# Score predictions
+X = data.frame(Hours = c(4.36, 6.86, 8.84))
+predictions = predict(model, X)
+predictions
+```
+
+The model predicts scores of 49.18, 73.97, and 93.60 for study hours of 4.36, 6.86, and 8.84 respectively. The data in this model has a range of 0-10 hours and scores of 0-100. Predictions outside of this range (i.e. predicting a score for hours > 10) require extrapolation. This means predictions are based on assumptions rather than real data, which means the predictions are unlikely to be valid. Using this model assumes that the relationship between hours and scores remains linear which is unlikely to be true. Studying beyond a certain amount of hours will likely have diminishing returns so the assumption of a linear relationship is poor.
+
+### Part 4
+
+A simple linear regression model was employed to investigate the connections between fertility rate and age in female rhesus macaques from Cayo Santiago. Reproductive data from Cayo Santiago rhesus macaque females was used, as documented in Luevano et al. (2022). The goal was to determine whether female fertility is influenced by age through the application of simple linear regression analysis. 
+The mean age-specific fertility rate is defined as the number of offspring produced at age ‘x’ divided by the total number of females of age ‘x’.
+
+a). The mean age specific fertility is plotted against age below.
+
+```{r, echo=FALSE}
+# Load ggplot2 package
+library(ggplot2)
+
+# Load csv
+data = read.csv('macaque.csv')
+
+# Plot with regression line
+ggplot(data, aes(x=age, y=mean_fertility)) +
+  geom_point(color="blue", size=3) +  # Scatter plot
+  labs(
+    title="Macaque mean age-specific fertility rate vs age",
+    x="Age", 
+    y="Mean age-specific fertility"
+  ) + theme_minimal()
+```
+
+As the age of the Macaques increases, the mean age-specific fertility appears to increase until approximately age 8, and then decrease. The association appears to be non-linear.
+
+b). A simple linear regression is modeled below.
+
+```{r}
+model = lm(mean_fertility ~ age, data=data)
+coeffs = summary(model)$coefficients
+coeffs
+```
+
+From this model a linear regression equation can be formed.
+
+y = 0.822 -0.019x
+
+This model predicts that for every year that age increases, the mean age-specific fertility rate decreases by 0.019. It also predicts that for Macaques of age 0 the fertility rate is 0.822 (intercept).
+
+c). The simple linear regression is plotted onto the graph of the observations below.
+
+```{r, echo=FALSE}
+# Extract coefficients
+intercept = round(coef(model)[1], 2)
+slope = round(coef(model)[2], 2)
+
+# Create regression equation as a string
+reg_eq = paste0("y = ", slope, "x + ", intercept)
+
+# Plot with regression line
+ggplot(data, aes(x=age, y=mean_fertility)) +
+  geom_point(color="blue", size=3) +  # Scatter plot
+  geom_smooth(method="lm", color="red", se=FALSE) +  # Regression line
+  labs(
+    title="Macaque mean age-specific fertility rate vs age",
+    subtitle=paste("Regression Equation:", reg_eq),
+    x="Age", 
+    y="Mean age-specific fertility"
+  ) + theme_minimal()
+```
+
+A linear model appears not to model the data well. The observations create a clear quadratic arc which a straight line cannot represent well. It is obvious that the fit is not adequate, but this can be investigated further with residual plots.
+
+```{r}
+# Check residuals
+plot(model)
+```
+
+In the 'Residuals vs Fitted' plot, the residual values appear to be in an obvious arc and are not scattered randomly around zero. This suggests that a linear model is not appropriate as was stated earlier. The 'Q-Q Residuals' plot has points that deviate from the diagonal line in an s-curve, with heavy deviations at the tails. This suggests that residuals are not normally distributed which is an assumption of linear regression. There is no funnel shape on the 'Scale-Location' plot, suggesting no issues with heteroscedasticity but there seems to be one extreme leverage point (beyond Cook's distance) on the 'Residuals vs Leverage' plot, that may be distorting the model.
+
+The residual plots suggest a better fit is possible. Adding a quadratic term to the model is explored below.
+
+```{r}
+# Try adding quadratic term
+model_quad = lm(mean_fertility ~ age + I(age^2), data=data)
+coeffs = summary(model_quad)$coefficients
+coeffs
+
+```
+
+This model was plotted with the observations below.
+
+```{r, echo=FALSE}
+# Extract coefficients
+coefs = coef(model_quad)
+intercept = round(coefs[1], 3)
+linear_term = round(coefs[2],3)
+quadratic_term = round(coefs[3], 3)
+
+# Create quadratic equation as a string
+quad_eq = paste0("y = ", quadratic_term, "x² + ", linear_term, "x + ", intercept)
+
+# Plot with regression line
+ggplot(data, aes(x=age, y=mean_fertility)) +
+  geom_point(color="blue", size=3) +  # Scatter plot
+  geom_smooth(method="lm", formula=y ~ poly(x, 2)) +  # Regression line
+  labs(
+    title="Macaque mean age-specific fertility rate vs age",
+    subtitle=paste("Regression Equation:", quad_eq),
+    x="Age", 
+    y="Mean age-specific fertility"
+  ) + theme_minimal()
+```
+
+Adding the quadratic term appears to greatly improve the fit of the model. The residual plots of the model are investigated below.
+
+```{r, echo=FALSE}
+
+# Check residuals
+plot(model_quad)
+```
+
+In the 'Residuals vs Fitted' plot, the residual values seem to be scattered fairly randomly around zero. This suggests that the model with the quadratic term is appropriate. The 'Q-Q Residuals' plot has points that follow the diagonal line, but with slight s-curve deviations. This suggests that residuals are mostly normally distributed. There is no funnel shape on the 'Scale-Location' plot, suggesting no issues with heteroscedasticity but there seems extreme leverage point as before (beyond Cook's distance) on the 'Residuals vs Leverage' plot. Excluding this point could potentially improve the fit, but contextually this point is important. The data point that has extreme leverage is the first one, or the point representing the fertility rate of macaques aged one, which is understandably significantly lower than macaques of greater age.
+
+d). Using the equation of the regression line, age-specific fertility rate predictions can be made, given the age of a macaque.
+
+```{r}
+# Fertility predictions
+X = data.frame(age = c(6.50, 14.25, 18.75))
+predictions = predict(model_quad, X)
+predictions
+```
+
+The model predicts fertility rates of 0.66, 0.70, and 0.51 for ages of 6.50, 14.25, and 18.75 respectively.
