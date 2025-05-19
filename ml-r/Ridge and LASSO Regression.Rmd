@@ -1,0 +1,455 @@
+---
+title: "STAT448 Assignment 2"
+author: "Thomas Waldin 17775654"
+date: "2025-04-14"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include=FALSE}
+library(corrplot)
+library(MASS)
+library(boot)
+library(glmnet)
+library(pheatmap)
+```
+### Part 1
+
+A dataset that includes a large number of variables related to residential building construction has been used.
+
+a). The correlation between variables was explored by the following correlation heatmap.
+
+```{r}
+load('Residen.RData')
+```
+
+```{r, echo = FALSE, fig.width = 12, fig.height = 10}
+# Calculate the correlation matrix
+data = Residen[, !names(Residen) %in% c("V105")]
+cor_matrix = cor(Residen, use = "complete.obs")  # use = "complete.obs" excludes missing data
+
+# Plot the heatmap with no labels
+pheatmap(cor_matrix, 
+         color = colorRampPalette(c("blue", "white", "red"))(50),
+         main = "Correlation Heatmap of All Variables",
+         cluster_rows = FALSE,  
+         cluster_cols = FALSE,
+         fontsize_row = 6,
+         fontsize_col = 6)
+
+```
+Although the heatmap is cluttered, it demonstrates substantial multicollinearity among variables. This will likely cause issues when fitting a linear regression, as it violates the key assumption that variables are independent.
+
+b). A linear regression model was fitted to explain the 'actual sales price' (V104) in terms of all other variables excluding 'actual construction costs' (V105).
+
+```{r}
+set.seed(0)
+
+# Create model excluding V105
+model = lm(V104 ~ ., data = Residen[, !names(Residen) %in% c("V105")])
+
+# View summary
+summary(model)
+
+```
+The p-values show that 'COMPLETION YEAR' and 'COMPLETION QUARTER' are highly significant (p < 0.001). V2, V3, and V8 are also significant and V5 may be significant. The p-values of all other variables are high, suggesting they would be unlikely to improve predictive performance.
+
+32 of the variables were dropped from the model 'because of singularities' indicating perfect linear dependence on other variables. This suggest severe multicollinearity and reinforces the findings from the correlation heatmap.
+
+The RSE is the average size of prediction errors, which is approximately 10% of the mean actual sales price. 
+```{r}
+cat("RSE as % of mean V104:", 148.6 / mean(Residen$V104) * 100, "%")
+```
+The R-squared demonstrates that 98.8% of the variance in V104 is explained by the model. The adjusted R-squared is at a slightly lower 98.5% as is penalises the number of predictor variables.The F-statistic and p-value suggest that the model is statistically significant.
+
+c). A linear regression model was generated using a backwards selection and a step-wise selection.
+
+```{r, results='hold'}
+set.seed(0)
+
+# Prepare data
+data = Residen[, !(names(Residen) %in% c("V105"))]
+train_index = sample(seq_len(nrow(data)), size = 0.8 * nrow(data))
+train_data = data[train_index, ]
+test_data = data[-train_index, ]
+n = nrow(data)
+
+# Backwards selection
+full_model = glm(V104 ~ ., data = train_data)
+start_back = Sys.time()
+back_model = step(full_model, direction = "backward", trace = 0,)
+end_back = Sys.time()
+time_back = end_back - start_back
+
+# Holdout MSE (on test data)
+pred_back = predict(back_model, newdata = test_data)
+mse_back = mean((test_data$V104 - pred_back)^2)
+
+# Cross-Validation MSE (10-fold)
+cv_mse_back = mean(cv.glm(data = train_data, glmfit = back_model, K = 10)$delta[1])
+
+# Step wise selection
+null_model = glm(V104 ~ 1, data = train_data)
+start_step = Sys.time()
+step_model = step(null_model, scope = list(lower=~1, upper=formula(full_model)), direction="both", trace = 0)
+end_step = Sys.time()
+time_step = end_step - start_step
+
+# Holdout MSE
+pred_step = predict(step_model, newdata = test_data)
+mse_step = mean((test_data$V104 - pred_step)^2)
+
+# Cross-Validation MSE
+cv_mse_step = mean(cv.glm(data = train_data, glmfit = step_model, K = 10)$delta[1])
+
+### == OUTPUT COMPARISON == ###
+cat("== BACKWARD SELECTION ==\n")
+cat("Time taken:", time_back, "\n")
+cat("Holdout MSE:", mse_back, "\n")
+cat("Cross-validated MSE:", cv_mse_back, "\n")
+cat("Number of predictors:", length(coef(back_model)) - 1, "\n\n")
+
+cat("== STEPWISE SELECTION ==\n")
+cat("Time taken:", time_step, "\n")
+cat("Holdout MSE:", mse_step, "\n")
+cat("Cross-validated MSE:", cv_mse_step, "\n")
+cat("Number of predictors:", length(coef(step_model)) - 1, "\n\n")
+```
+The holdout MSE for the model with step-wise selection was lower than the model with backward selection ($107000 vs. $123000). The cross-validated MSE scores were also lower for the step-wise model ($9800 vs. $12400). The step-wise model was also much faster to train and it used far fewer features (18 vs. 52). The step-wise is the better model, as the MSE is lower, it is more parsimonious, and has a lesser time cost. However, both models appear to be overfitting, as the holdout MSE is significantly larger than the cross-validated MSE for each model.
+ 
+d). A linear regression model was generated using Ridge regression and LASSO regression. Note that glmnet standardises predictors by default.
+
+```{r, results='hold'}
+set.seed(0)
+
+# Prepare data
+y = Residen$V104
+X = model.matrix(V104 ~ . - V105, data = Residen)[, -1]  # Remove intercept
+
+# Ridge
+start_ridge = Sys.time()
+cv_ridge = cv.glmnet(X, y, alpha = 0)
+end_ridge = Sys.time()
+time_ridge = end_ridge - start_ridge
+
+lambda_ridge = cv_ridge$lambda.min
+model_ridge = glmnet(X, y, alpha = 0, lambda = lambda_ridge)
+mse_ridge = min(cv_ridge$cvm)
+
+# LASSO
+start_lasso = Sys.time()
+cv_lasso = cv.glmnet(X, y, alpha = 1)
+end_lasso = Sys.time()
+time_lasso = end_lasso - start_lasso
+
+lambda_lasso = cv_lasso$lambda.min
+model_lasso = glmnet(X, y, alpha = 1, lambda = lambda_lasso)
+mse_lasso = min(cv_lasso$cvm)
+
+# Output comparison
+cat("== Ridge Regression ==\n")
+cat("Best lambda:", lambda_ridge, "\n")
+cat("Cross-validated MSE:", mse_ridge, "\n")
+cat("Time taken:", time_ridge, "\n")
+cat("Number of non-zero coefficients:", sum(coef(model_ridge) != 0), "\n\n")
+
+cat("== LASSO Regression ==\n")
+cat("Best lambda:", lambda_lasso, "\n")
+cat("Cross-validated MSE:", mse_lasso, "\n")
+cat("Time taken:", time_lasso, "\n")
+cat("Number of non-zero coefficients:", sum(coef(model_lasso) != 0), "\n")
+
+```
+The best $\lambda$ for Ridge regression was 117.6 which is very large, indicating strong L2 regularisation and strong shrinkage of all coefficients. The best $\lambda$ for LASSO regression was 1.9, suggesting moderate L1 regularisation and many coefficients have become zero. This is evident by the number of non-zero coefficients, 108 for Ridge and 34 for LASSO. The time taken for Ridge was about 2.5 times longer than LASSO. The cross-validated MSE for the LASSO regression was about half of that of the Ridge Regression ($29500 vs. $58200)
+
+
+e). The LASSO regression is better in this case. It is more parsimonious, has a lower time cost, while also having a lower cross-validated MSE. Comparing the cross-validated MSE to the backward and step-wise selecting models, the Ridge and LASSO initially appear to have a greater error, but this is due to these models sacrificing accuracy to reduce overfitting. The cross-validated MSE is a better representation of the models ability to generalise in this case. LASSO regression also typically handles multicollinearity far better than the other models considered, so it makes sense that it would be the best performing in this case.
+
+### Part 2
+
+A different dataset contains information on 42 patients with Parkinson's disease. The target variable is the total unified Parkinson’s disease rating scale (UPDRS).
+
+The dataset was read and split into a training set with 30 patients and a testing set with the remaining 12. The preparation of the data also incuded scaling.
+
+```{r}
+
+data = read.csv("parkinsons.csv")
+set.seed(0)
+
+# Prepare data
+y = data$UPDRS
+X = as.matrix(data[, setdiff(names(data), "UPDRS")])
+
+n = nrow(data)
+train_idx = sample(seq_len(n), size = 30)
+test_idx = setdiff(seq_len(n), train_idx)
+
+X_train = X[train_idx, ]
+X_test = X[test_idx, ]
+y_train = y[train_idx]
+y_test = y[test_idx]
+
+# Scale data
+X_train_scaled = scale(X_train)
+train_center = attr(X_train_scaled, "scaled:center")
+train_scale = attr(X_train_scaled, "scaled:scale")
+X_test_scaled = scale(X_test, center = train_center, scale = train_scale)
+
+```
+
+a). It was confirmed that a linear model can fit the training data exactly.
+  
+```{r}
+model <- lm(y_train ~ X_train_scaled)
+
+# Check residuals
+residuals <- resid(model)
+max(abs(residuals))  # Should be 0 (or very close)
+
+# Check R-squared
+summary(model)$r.squared  # Should be 1 for perfect fit
+
+```
+This model will not be useful. There are more predictor variables than observations (patients) so there will always be a linear combination of features that fit the observations perfectly (system of linear equations is undetermined, allowing infinite solutions). This model is overfit, and therefore has no predicting power and is not generalisable.
+
+b). LASSO Regression was used to fit the training data, using leave-one-out cross-validation to find $\lambda$.
+
+```{r, results='hold'}
+# Define grid of lambda values
+grid = 10^seq(3, -1, length = 100)
+
+# LASSO with LOOCV (nfolds = number of training samples)
+lasso_cv <- cv.glmnet(
+  x = X_train,
+  y = y_train,
+  alpha = 1,
+  lambda = grid,
+  nfolds = 30,
+  thresh = 1e-10
+)
+
+# Best lambda
+best_lambda = lasso_cv$lambda.min
+cat("Optimal lambda:", best_lambda, "\n")
+
+# Fit model with best lambda
+lasso_model = glmnet(X_train, y_train, alpha = 1, lambda = best_lambda)
+
+# Predict on test set
+pred_test = predict(lasso_model, s = best_lambda, newx = X_test)
+
+# Compute test MSE
+test_mse = mean((y_test - pred_test)^2)
+cat("Test MSE:", test_mse, "\n")
+
+null_mse = mean((y_test - mean(y_train))^2)
+cat("Null MSE (mean predictor):", null_mse)
+```
+The optimal value of the tuning parameter $\lambda$ was computed to be 0.534 and the resulting test error was 31.0, which is significantly better than a null model (154, for context).
+
+c). Inspecting the coefficients shows which variables were used.
+
+```{r}
+coef(lasso_model)
+```
+The final model is a LASSO regression where the tuning parameter $\lambda$ was found using 'leave one out cross validation'. Two variables X83 and X97 were selected out of 97 total, meaning many variables were shrunk to zero. An MSE of approximately 31 indicates the model should perform reasonably on unseen data.
+
+Feature selection and regularisation were successfully completed by the LASSO regression. The selection of only two variables suggests many are not informative in predicting UPDRS in this dataset. X97 was known to be informative, so its inclusion makes sense. Interestingly, the coefficient for X83 was over 6 times larger than the coefficient for X97, suggesting it may have a stronger linear relationship with UPDRS.  
+ 
+d). The analysis was repeated with a different seed set when creating the data, generating a different random split of the training and test sets.
+
+```{r, results='hold'}
+# Repeated with a different seed set
+set.seed(1)
+
+# Prepare data
+y = data$UPDRS
+X = as.matrix(data[, setdiff(names(data), "UPDRS")])
+
+n = nrow(data)
+train_idx = sample(seq_len(n), size = 30)
+test_idx = setdiff(seq_len(n), train_idx)
+
+X_train = X[train_idx, ]
+X_test = X[test_idx, ]
+y_train = y[train_idx]
+y_test = y[test_idx]
+
+# Scale data
+X_train_scaled = scale(X_train)
+train_center = attr(X_train_scaled, "scaled:center")
+train_scale = attr(X_train_scaled, "scaled:scale")
+X_test_scaled = scale(X_test, center = train_center, scale = train_scale)
+
+# Define grid of lambda values
+grid <- 10^seq(3, -1, length = 100)
+
+# LASSO with LOOCV (nfolds = number of training samples)
+lasso_cv <- cv.glmnet(
+  x = X_train,
+  y = y_train,
+  alpha = 1,
+  lambda = grid,
+  nfolds = 30,
+  thresh = 1e-10
+)
+
+# Best lambda
+best_lambda <- lasso_cv$lambda.min
+cat("Optimal lambda:", best_lambda, "\n")
+
+# Fit model with best lambda
+lasso_model <- glmnet(X_train, y_train, alpha = 1, lambda = best_lambda)
+
+# Predict on test set
+pred_test <- predict(lasso_model, s = best_lambda, newx = X_test)
+
+# Compute test MSE
+test_mse <- mean((y_test - pred_test)^2)
+cat("Test MSE:", test_mse, "\n")
+```
+With a different seed, different values of $\lambda$ and MSE have been generated. The variables selected with this seed were examined.
+
+```{r}
+coef(lasso_model)
+```
+
+X97 was selected again, but X83 was not. In addition X, X5, X11, and X95 were selected. This suggests that X97 is a robust predictor (which is known) but perhaps the other features may not be, if different features are chosen each time. Due to the small sample size its possible that the other features may be noise. Training a number of different models could be a good next step and see what features are consistently predictors.
+
+### Part 3
+
+A dataset containing 2000 observations of weather station data including thirteen features (listed in output) was loaded and split randomly using a 80/20 split.
+
+```{r}
+data = read.csv("Weather_Station_data_v1.csv")
+set.seed(0)
+names(data)
+
+# Prepare data
+y = data$MEAN_ANNUAL_RAINFALL
+X = as.matrix(data[, names(data) != "MEAN_ANNUAL_RAINFALL"])
+
+n = nrow(data)
+train_idx = sample(seq_len(n), size = n*0.8)
+test_idx = setdiff(seq_len(n), train_idx)
+
+X_train = X[train_idx, ]
+X_test = X[test_idx, ]
+y_train = y[train_idx]
+y_test = y[test_idx]
+
+# Scale data
+X_train_scaled = scale(X_train)
+train_center = attr(X_train_scaled, "scaled:center")
+train_scale = attr(X_train_scaled, "scaled:scale")
+X_test_scaled = scale(X_test, center = train_center, scale = train_scale)
+y_train_scaled = scale(y_train)
+y_mean = attr(y_train_scaled, "scaled:center")
+y_sd = attr(y_train_scaled, "scaled:scale")
+
+```
+
+An ElasticNet model was used to predict the mean annual rainfall using 10-fold cross-validation to optimise values for $\alpha$ and $\lambda$. 
+
+```{r, results='hold'}
+library(glmnet)
+set.seed(0)
+
+# Search over alpha values
+alphas = seq(0, 1, by = 0.1)
+cv_errors = c()
+models = list()
+
+for (a in alphas) {
+  cv = cv.glmnet(X_train_scaled, y_train_scaled, alpha = a, nfolds = 10)
+  cv_errors = c(cv_errors, min(cv$cvm))
+  models[[as.character(a)]] = cv
+}
+
+# Find best alpha and corresponding lambda
+best_alpha = alphas[which.min(cv_errors)]
+best_model = models[[as.character(best_alpha)]]
+best_lambda = best_model$lambda.min
+
+# Report results
+cat("Best alpha:", best_alpha, "\n")
+cat("Best lambda:", best_lambda, "\n")
+
+```
+The cross-validation results for the model were plotted below.
+
+```{r, echo=FALSE, fig.width=10, fig.height=6}
+par(mfrow = c(1, 2))
+
+# Alpha performance
+plot(alphas, cv_errors, type = "b", pch = 19, col = "red",
+     xlab = "Alpha (0 = Ridge, 1 = Lasso)", 
+     ylab = "Mean-Squared Error")
+abline(v = best_alpha, lty = 2, col = "blue")
+
+# Lambda path for best alpha
+plot(best_model)
+abline(v = log(best_lambda), lty = 2, col = "red")
+
+# Reset plot layout
+par(mfrow = c(1, 1))
+
+```
+As can be seen in the left plot, the lowest CV MSE occurs at $\alpha$ = 0.5, suggesting a mix of LASSO and Ridge regularization works best. The right plot shows the coefficient shrinkage as $\lambda$ increases, with vertical lines at the minimum $\lambda$, and at the maximum $\lambda$ within one standard error.
+
+Predictions were made on the test set using both lambda.min and lambda.1se. The coefficients of each model, the MSE and RMSE of each, and the number of predictors used in each model are shown below.
+
+```{r, results='hold'}
+# Fit final models for BOTH lambda.min and lambda.1se
+final_model_min = glmnet(X_train_scaled, y_train_scaled, 
+                         alpha=best_alpha, lambda=best_model$lambda.min)
+final_model_1se = glmnet(X_train_scaled, y_train_scaled, 
+                         alpha=best_alpha, lambda=best_model$lambda.1se)
+
+# Predictions (unscaled)
+pred_min = predict(final_model_min, newx=X_test_scaled) * y_sd + y_mean
+pred_1se = predict(final_model_1se, newx=X_test_scaled) * y_sd + y_mean
+
+# Calculate errors
+mse_min = mean((y_test - pred_min)^2)
+mse_1se = mean((y_test - pred_1se)^2)
+rmse_min = sqrt(mse_min)
+rmse_1se = sqrt(mse_1se)
+
+# Count non-zero predictors
+num_pred_min = sum(coef(final_model_min) != 0) - 1  # Exclude intercept
+num_pred_1se = sum(coef(final_model_1se) != 0) - 1
+
+# Print comprehensive results
+cat("\n=== lambda.min ===\n")
+cat("MSE:", mse_min, "\n")
+cat("RMSE:", rmse_min, "\n")
+cat("Number of predictors used:", num_pred_min, "\n\n")
+
+cat("=== lambda.1se ===\n")
+cat("MSE:", mse_1se, "\n")
+cat("RMSE:", rmse_1se, "\n")
+cat("Number of predictors used:", num_pred_1se, "\n\n")
+
+# Show coefficients comparison
+cat("Coefficients (lambda.min):\n")
+coef(final_model_min)
+cat("\nCoefficients (lambda.1se):\n")
+coef(final_model_1se)
+```
+The lambda.min value is the value of $\lambda$ that minimises the cross validation MSE, which typically leads to the best accuracy in predictions. This model uses 11 predictors, which more than the 7 used by the other model. The increased complexity may risk overfitting the training data.
+
+The lambda.1se value is the largest value of $\lambda$ within one standard error of the lambda.min value. This model is simpler, with fewer predictors, likely with higher bias but lower variance. While the accuracy of this model is lower, it is likely to generalise better to unseen data.
+
+In this case the simpler model with lambda.1se is recommended. There are only 2000 observations so having a less complex model that is less likely to overfit is preferable in this case. The slight increase in RMSE (122 vs. 116) is likely worth it to reduce the complexity from 11 variables to 7.
+
+
+
+
+
+ 
