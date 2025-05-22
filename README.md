@@ -1,2 +1,2 @@
 # MADS
-Projects showcasing my work towards a Masters in Applied Data Science.
+Projects showcasing my work towards a Master of Applied Data Science.
